@@ -3,41 +3,56 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Speech to Text Demo</title>
+  <title>Speech to Text Demo (Browser API)</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       max-width: 800px;
       margin: 0 auto;
       padding: 20px;
+      background-color: #f4f4f4;
+      color: #333;
     }
     #controls {
       margin: 20px 0;
       text-align: center;
     }
     #record-btn {
-      padding: 10px 20px;
-      font-size: 16px;
+      padding: 12px 25px;
+      font-size: 18px;
       background-color: #4285f4;
       color: white;
       border: none;
-      border-radius: 4px;
+      border-radius: 5px;
       cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    #record-btn:hover {
+      background-color: #357ae8;
     }
     #record-btn.recording {
       background-color: #ea4335;
+    }
+    #record-btn.recording:hover {
+      background-color: #d93525;
     }
     #transcript {
       margin-top: 20px;
       padding: 15px;
       border: 1px solid #ddd;
-      border-radius: 4px;
+      border-radius: 5px;
       min-height: 100px;
+      background-color: #fff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      text-align: center;
+      color: #333;
     }
   </style>
 </head>
 <body>
-  <h1>Speech to Text Demo</h1>
+  <h1>Speech to Text Demo (Browser API)</h1>
   
   <div id="controls">
     <button id="record-btn">🎤 Bắt đầu nói</button>
@@ -52,14 +67,22 @@
     let recognition;
 
     // Kiểm tra hỗ trợ trình duyệt
-    if (!('webkitSpeechRecognition' in window)) {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       transcriptDiv.innerHTML = 'Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.';
       recordBtn.disabled = true;
     } else {
-      recognition = new webkitSpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'vi-VN';
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = true; // Tiếp tục nhận dạng cho đến khi dừng thủ công
+      recognition.interimResults = true; // Hiển thị kết quả tạm thời
+      recognition.lang = 'vi-VN'; // Đặt ngôn ngữ Tiếng Việt
+
+      recognition.onstart = () => {
+        console.log('Speech recognition started.');
+        recordBtn.textContent = '■ Dừng ghi âm';
+        recordBtn.classList.add('recording');
+        isRecording = true;
+      };
 
       recognition.onresult = (event) => {
         let interimTranscript = '';
@@ -68,31 +91,51 @@
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += transcript;
+            finalTranscript += transcript + '. '; // Thêm dấu chấm câu cho rõ ràng
           } else {
             interimTranscript += transcript;
           }
         }
-
+        // Cập nhật nội dung hiển thị
+        // Hiển thị final trước, sau đó là interim (màu xám)
         transcriptDiv.innerHTML = finalTranscript + '<em style="color:gray">' + interimTranscript + '</em>';
       };
 
       recognition.onerror = (event) => {
-        console.error('Recognition error:', event.error);
+        console.error('Speech recognition error:', event.error);
+        let errorMessage = 'Đã xảy ra lỗi: ' + event.error;
+        if (event.error === 'no-speech') {
+            errorMessage = 'Không phát hiện được giọng nói. Vui lòng thử lại.';
+        } else if (event.error === 'audio-capture') {
+            errorMessage = 'Không thể thu âm. Kiểm tra micro của bạn.';
+        } else if (event.error === 'not-allowed') {
+            errorMessage = 'Quyền truy cập micro bị từ chối. Vui lòng cấp quyền.';
+        }
+        transcriptDiv.textContent = errorMessage;
+      };
+
+      recognition.onend = () => {
+        console.log('Speech recognition ended.');
+        recordBtn.textContent = '🎤 Bắt đầu nói';
+        recordBtn.classList.remove('recording');
+        isRecording = false;
       };
     }
 
     recordBtn.addEventListener('click', () => {
+      if (!recognition) return;
+
       if (isRecording) {
         recognition.stop();
-        recordBtn.textContent = '🎤 Bắt đầu nói';
-        recordBtn.classList.remove('recording');
       } else {
-        recognition.start();
-        recordBtn.textContent = '■ Dừng ghi âm';
-        recordBtn.classList.add('recording');
+        try {
+            transcriptDiv.innerHTML = 'Đang lắng nghe...'; // Xóa kết quả cũ
+            recognition.start();
+        } catch (e) {
+            console.error("Error starting recognition: ", e);
+            transcriptDiv.textContent = "Không thể bắt đầu nhận dạng.";
+        }
       }
-      isRecording = !isRecording;
     });
   </script>
 </body>
