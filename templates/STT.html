@@ -3,16 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Demo STT (Flask + speech_recognition)</title>
-
+  <title>Streaming STT với Web Speech API</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 20px;
-    }
-    h1 {
-      font-size: 24px;
-      margin-bottom: 10px;
     }
     #controls {
       margin-bottom: 15px;
@@ -42,191 +37,88 @@
   </style>
 </head>
 <body>
-  <h1>Demo STT (Flask + speech_recognition) trên Vercel</h1>
+  <h1>Streaming STT (Web Speech API)</h1>
 
   <div id="controls">
-    <button id="record-btn">🎤 Bắt đầu ghi âm</button>
-    <span id="status">Chưa ghi âm</span>
+    <button id="record-btn">🎤 Bắt đầu nói</button>
+    <span id="status">Chưa bắt đầu</span>
   </div>
 
-  <div id="transcript">Bản phiên âm sẽ hiện ở đây …</div>
+  <div id="transcript">Kết quả sẽ hiển thị ở đây …</div>
 
   <script>
-    // --- Toàn cục để ghi âm và chuyển WAV ---
-    let audioContext;
-    let micStream;
-    let scriptProcessor;
-    let bufferData = [];
-    const TARGET_SAMPLE_RATE = 16000; // 16kHz, phù hợp speech_recognition
+    // 1. Kiểm tra hỗ trợ SpeechRecognition
+    window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!window.SpeechRecognition) {
+      alert("Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng dùng Chrome/Edge mới nhất.");
+      throw new Error("Web Speech API not supported");
+    }
 
     const recordBtn = document.getElementById("record-btn");
     const statusSpan = document.getElementById("status");
     const transcriptDiv = document.getElementById("transcript");
+
+    let recognition;
     let isRecording = false;
+
+    function initRecognition() {
+      recognition = new window.SpeechRecognition();
+      recognition.continuous = true;            // Giữ kết nối liên tục
+      recognition.interimResults = true;        // Nhận kết quả “interim” khi người dùng vẫn đang nói
+      recognition.lang = "vi-VN";               // Thiết lập ngôn ngữ tiếng Việt
+
+      recognition.onstart = () => {
+        statusSpan.textContent = "Đang nghe...";
+      };
+
+      recognition.onerror = (event) => {
+        console.error("Recognition error:", event.error);
+        statusSpan.textContent = "Lỗi: " + event.error;
+      };
+
+      recognition.onend = () => {
+        // Khi người dùng ấn dừng hoặc kết nối bị ngắt
+        if (isRecording) {
+          // Có thể tự động khởi động lại nếu muốn “liên tục không ngừng”
+          // recognition.start();
+          statusSpan.textContent = "Đã dừng.";
+          isRecording = false;
+          recordBtn.textContent = "🎤 Bắt đầu nói";
+          recordBtn.classList.remove("recording");
+        }
+      };
+
+      recognition.onresult = (event) => {
+        // event.results là đối tượng SpeechRecognitionResultList
+        let interim = "";
+        let finalText = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalText += transcript + " ";
+          } else {
+            interim += transcript;
+          }
+        }
+        // Hiển thị kết quả tạm thời (interim) + kết quả cuối (final)
+        transcriptDiv.textContent = finalText + "\n" + "%c[" + interim + "]"; // interim màu khác nếu muốn
+      };
+    }
 
     recordBtn.addEventListener("click", () => {
       if (!isRecording) {
-        startRecording();
+        // Bắt đầu nhận dạng
+        initRecognition();
+        recognition.start();
+        isRecording = true;
+        recordBtn.textContent = "■ Dừng nói";
+        recordBtn.classList.add("recording");
       } else {
-        stopRecording();
+        // Dừng nhận dạng
+        recognition.stop();
+        // recognition.onend sẽ được gọi, và cập nhật trạng thái
       }
     });
-
-    async function startRecording() {
-      try {
-        // 1) Xin quyền mic
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        micStream = audioContext.createMediaStreamSource(stream);
-
-        // 2) Tạo ScriptProcessor để lấy PCM Float32
-        scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-        micStream.connect(scriptProcessor);
-        scriptProcessor.connect(audioContext.destination);
-
-        bufferData = []; // Xóa buffer
-
-        scriptProcessor.onaudioprocess = event => {
-          const input = event.inputBuffer.getChannelData(0); // Float32Array
-          const downsampled = downsampleBuffer(input, audioContext.sampleRate, TARGET_SAMPLE_RATE);
-          if (downsampled) {
-            bufferData.push(downsampled);
-          }
-        };
-
-        isRecording = true;
-        recordBtn.textContent = "■ Dừng ghi âm";
-        recordBtn.classList.add("recording");
-        statusSpan.textContent = "Đang ghi âm...";
-        transcriptDiv.textContent = "";
-      } catch (err) {
-        console.error("Không thể truy cập microphone:", err);
-        alert("Không thể truy cập microphone: " + err);
-      }
-    }
-
-    function stopRecording() {
-      // 1) Ngắt processor và mic
-      scriptProcessor.disconnect();
-      micStream.disconnect();
-      audioContext.close();
-
-      isRecording = false;
-      recordBtn.textContent = "🎤 Bắt đầu ghi âm";
-      recordBtn.classList.remove("recording");
-      statusSpan.textContent = "Đang xử lý…";
-
-      // 2) Gộp bufferData thành WAV Blob
-      const wavBlob = encodeWAV(bufferData, TARGET_SAMPLE_RATE);
-      // 3) Gửi lên /transcribe
-      sendToServer(wavBlob);
-    }
-
-    // Hàm downsample Float32Array từ inputRate → outputRate,
-    // trả về Int16Array
-    function downsampleBuffer(buffer, inputRate, outputRate) {
-      if (outputRate === inputRate) {
-        const int16 = new Int16Array(buffer.length);
-        for (let i = 0; i < buffer.length; i++) {
-          let s = Math.max(-1, Math.min(1, buffer[i]));
-          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        return int16;
-      }
-      const ratio = inputRate / outputRate;
-      const newLength = Math.round(buffer.length / ratio);
-      const result = new Int16Array(newLength);
-      let offsetResult = 0;
-      let offsetBuffer = 0;
-      while (offsetResult < newLength) {
-        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-        let sum = 0, count = 0;
-        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-          sum += buffer[i];
-          count++;
-        }
-        const avg = sum / count;
-        result[offsetResult] = avg < 0 ? avg * 0x8000 : avg * 0x7FFF;
-        offsetResult++;
-        offsetBuffer = nextOffsetBuffer;
-      }
-      return result;
-    }
-
-    // Hàm tạo WAV Blob từ mảng Int16Array[]
-    function encodeWAV(buffers, sampleRate) {
-      let totalSamples = 0;
-      for (let i = 0; i < buffers.length; i++) {
-        totalSamples += buffers[i].length;
-      }
-      const bytesPerSample = 2;
-      const blockAlign = 1 * bytesPerSample;
-      const byteRate = sampleRate * blockAlign;
-      const dataSize = totalSamples * bytesPerSample;
-      const buffer = new ArrayBuffer(44 + dataSize);
-      const view = new DataView(buffer);
-
-      // RIFF header
-      writeString(view, 0, "RIFF");
-      view.setUint32(4, 36 + dataSize, true);
-      writeString(view, 8, "WAVE");
-      // fmt chunk
-      writeString(view, 12, "fmt ");
-      view.setUint32(16, 16, true);      // Subchunk1Size = 16 (PCM)
-      view.setUint16(20, 1, true);       // AudioFormat = 1 (PCM)
-      view.setUint16(22, 1, true);       // NumChannels = 1
-      view.setUint32(24, sampleRate, true);
-      view.setUint32(28, byteRate, true);
-      view.setUint16(32, blockAlign, true);
-      view.setUint16(34, 16, true);      // BitsPerSample = 16
-      // data chunk
-      writeString(view, 36, "data");
-      view.setUint32(40, dataSize, true);
-
-      // Ghi PCM samples
-      let offset = 44;
-      for (let i = 0; i < buffers.length; i++) {
-        const buf = buffers[i];
-        for (let j = 0; j < buf.length; j++, offset += 2) {
-          view.setInt16(offset, buf[j], true);
-        }
-      }
-      return new Blob([view], { type: "audio/wav" });
-    }
-
-    function writeString(view, offset, str) {
-      for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-      }
-    }
-
-    function sendToServer(wavBlob) {
-      const fd = new FormData();
-      fd.append("audio_data", wavBlob, "recording.wav");
-
-      fetch("/transcribe", {
-        method: "POST",
-        body: fd
-      })
-      .then(resp => resp.json())
-      .then(data => {
-        if (data.transcript !== undefined) {
-          transcriptDiv.textContent = data.transcript;
-          statusSpan.textContent = "Hoàn tất.";
-        } else if (data.error) {
-          transcriptDiv.textContent = "Lỗi: " + data.error;
-          statusSpan.textContent = "Lỗi.";
-        } else {
-          transcriptDiv.textContent = "Không nhận được transcript.";
-          statusSpan.textContent = "Xong.";
-        }
-      })
-      .catch(err => {
-        console.error("Lỗi gửi lên server:", err);
-        transcriptDiv.textContent = "Lỗi khi gọi /transcribe: " + err;
-        statusSpan.textContent = "Lỗi.";
-      });
-    }
   </script>
 </body>
 </html>
