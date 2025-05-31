@@ -129,11 +129,11 @@
         recognition.stop();
       } else {
         try {
-            transcriptDiv.innerHTML = 'Đang lắng nghe...'; // Xóa kết quả cũ
-            recognition.start();
+          transcriptDiv.innerHTML = 'Đang lắng nghe...'; // Xóa kết quả cũ
+          recognition.start();
         } catch (e) {
-            console.error("Error starting recognition: ", e);
-            transcriptDiv.textContent = "Không thể bắt đầu nhận dạng.";
+          console.error("Error starting recognition: ", e);
+          transcriptDiv.textContent = "Không thể bắt đầu nhận dạng.";
         }
       }
     });
