@@ -2,20 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "STT.py",
+      "src": "app.py", // Tên file Flask chính của bạn
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
-      "src": "/transcribe",
-      "methods": ["POST"],
-      "dest": "STT.py"
-    },
-    {
-      "src": "/",
-      "methods": ["GET"],
-      "dest": "STT.py"
+      "src": "/(.*)",
+      "dest": "app.py" // Tên file Flask chính của bạn
     }
   ]
 }
