@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Flask STT Demo (SpeechRecognition)</title>
+  <title>STT Flask + Vercel</title>
 
   <style>
     body {
@@ -41,13 +41,13 @@
     }
   </style>
 
-  <!-- Tôi dùng Recorder.js (phiên bản 0.1.0) để xuất WAV trực tiếp -->
+  <!-- Nhúng Recorder.js (0.1.0) để ghi âm thành WAV -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recorderjs/0.1.0/recorder.min.js"
           integrity="sha512-AEAywwOWVkFMKLM5TaZ4VWA8KYdtc2tOfNQZvrCXcYHR4N6tUaO50O54B24sJn6z5ktdCX6UisHaXN/RJM13ig=="
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
-  <h1>Demo STT (Flask + speech_recognition)</h1>
+  <h1>Demo STT (Flask + speech_recognition) trên Vercel</h1>
 
   <div id="controls">
     <button id="record-btn">🎤 Bắt đầu ghi âm</button>
@@ -57,7 +57,6 @@
   <div id="transcript">Bản phiên âm sẽ hiện ở đây …</div>
 
   <script>
-    // --- Biến toàn cục cho ghi âm ---
     let audioContext;
     let gumStream;
     let inputPoint;
@@ -66,7 +65,6 @@
     const recordBtn = document.getElementById("record-btn");
     const statusSpan = document.getElementById("status");
     const transcriptDiv = document.getElementById("transcript");
-
     let isRecording = false;
 
     recordBtn.addEventListener("click", () => {
@@ -78,14 +76,13 @@
     });
 
     function startRecording() {
-      // Yêu cầu quyền sử dụng microphone
       navigator.mediaDevices.getUserMedia({ audio: true })
         .then(stream => {
           audioContext = new (window.AudioContext || window.webkitAudioContext)();
           gumStream = stream;
           inputPoint = audioContext.createMediaStreamSource(stream);
 
-          // Khởi tạo Recorder.js (ghi RAW PCM và xuất WAV)
+          // Khởi Recorder.js (ghi PCM mono)
           recorder = new Recorder(inputPoint, { numChannels: 1 });
           recorder.record();
 
@@ -102,7 +99,6 @@
     }
 
     function stopRecording() {
-      // Dừng thu, tạo Blob WAV
       recorder.stop();
       gumStream.getAudioTracks()[0].stop();
 
@@ -110,9 +106,7 @@
       recordBtn.classList.remove("recording");
       statusSpan.textContent = "Đang xử lý…";
 
-      // Xuất blob WAV
       recorder.exportWAV(blob => {
-        // Gửi blob WAV lên server để transcribe
         sendToServer(blob);
       });
 
@@ -120,7 +114,6 @@
     }
 
     function sendToServer(wavBlob) {
-      // Tạo FormData và đính kèm file WAV
       const fd = new FormData();
       fd.append("audio_data", wavBlob, "recording.wav");
 
