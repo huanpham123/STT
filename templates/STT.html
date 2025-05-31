@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Streaming STT với Web Speech API</title>
+  <title>Demo Streaming STT (Web Speech API)</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -37,7 +37,7 @@
   </style>
 </head>
 <body>
-  <h1>Streaming STT (Web Speech API)</h1>
+  <h1>Demo Streaming STT (Web Speech API)</h1>
 
   <div id="controls">
     <button id="record-btn">🎤 Bắt đầu nói</button>
@@ -47,7 +47,7 @@
   <div id="transcript">Kết quả sẽ hiển thị ở đây …</div>
 
   <script>
-    // 1. Kiểm tra hỗ trợ SpeechRecognition
+    // 1. Kiểm tra trình duyệt hỗ trợ Web Speech API hay không
     window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!window.SpeechRecognition) {
       alert("Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng dùng Chrome/Edge mới nhất.");
@@ -63,9 +63,9 @@
 
     function initRecognition() {
       recognition = new window.SpeechRecognition();
-      recognition.continuous = true;            // Giữ kết nối liên tục
-      recognition.interimResults = true;        // Nhận kết quả “interim” khi người dùng vẫn đang nói
-      recognition.lang = "vi-VN";               // Thiết lập ngôn ngữ tiếng Việt
+      recognition.continuous = true;            // Nhận liên tục
+      recognition.interimResults = true;        // Nhận kết quả interim
+      recognition.lang = "vi-VN";               // Ngôn ngữ tiếng Việt
 
       recognition.onstart = () => {
         statusSpan.textContent = "Đang nghe...";
@@ -77,10 +77,8 @@
       };
 
       recognition.onend = () => {
-        // Khi người dùng ấn dừng hoặc kết nối bị ngắt
+        // Khi người dùng nhấn dừng hoặc kết nối bị ngắt
         if (isRecording) {
-          // Có thể tự động khởi động lại nếu muốn “liên tục không ngừng”
-          // recognition.start();
           statusSpan.textContent = "Đã dừng.";
           isRecording = false;
           recordBtn.textContent = "🎤 Bắt đầu nói";
@@ -89,7 +87,7 @@
       };
 
       recognition.onresult = (event) => {
-        // event.results là đối tượng SpeechRecognitionResultList
+        // Xử lý interim và final transcripts
         let interim = "";
         let finalText = "";
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -100,23 +98,19 @@
             interim += transcript;
           }
         }
-        // Hiển thị kết quả tạm thời (interim) + kết quả cuối (final)
-        transcriptDiv.textContent = finalText + "\n" + "%c[" + interim + "]"; // interim màu khác nếu muốn
+        transcriptDiv.textContent = finalText + "\n" + "%c[" + interim + "]";
       };
     }
 
     recordBtn.addEventListener("click", () => {
       if (!isRecording) {
-        // Bắt đầu nhận dạng
         initRecognition();
         recognition.start();
         isRecording = true;
         recordBtn.textContent = "■ Dừng nói";
         recordBtn.classList.add("recording");
       } else {
-        // Dừng nhận dạng
         recognition.stop();
-        // recognition.onend sẽ được gọi, và cập nhật trạng thái
       }
     });
   </script>
