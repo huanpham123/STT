@@ -1,117 +1,98 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Demo Streaming STT (Web Speech API)</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Speech to Text Demo</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      margin: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
     }
     #controls {
-      margin-bottom: 15px;
+      margin: 20px 0;
+      text-align: center;
     }
     #record-btn {
       padding: 10px 20px;
       font-size: 16px;
+      background-color: #4285f4;
+      color: white;
       border: none;
       border-radius: 4px;
-      background-color: #007bff;
-      color: white;
       cursor: pointer;
     }
     #record-btn.recording {
-      background-color: #dc3545;
-    }
-    #status {
-      margin-left: 10px;
-      font-weight: bold;
+      background-color: #ea4335;
     }
     #transcript {
       margin-top: 20px;
-      font-size: 18px;
-      color: #333;
-      white-space: pre-wrap;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      min-height: 100px;
     }
   </style>
 </head>
 <body>
-  <h1>Demo Streaming STT (Web Speech API)</h1>
-
+  <h1>Speech to Text Demo</h1>
+  
   <div id="controls">
     <button id="record-btn">🎤 Bắt đầu nói</button>
-    <span id="status">Chưa bắt đầu</span>
   </div>
-
-  <div id="transcript">Kết quả sẽ hiển thị ở đây …</div>
+  
+  <div id="transcript">Kết quả sẽ hiển thị ở đây...</div>
 
   <script>
-    // 1. Kiểm tra trình duyệt hỗ trợ Web Speech API hay không
-    window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!window.SpeechRecognition) {
-      alert("Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng dùng Chrome/Edge mới nhất.");
-      throw new Error("Web Speech API not supported");
-    }
-
-    const recordBtn = document.getElementById("record-btn");
-    const statusSpan = document.getElementById("status");
-    const transcriptDiv = document.getElementById("transcript");
-
-    let recognition;
+    const recordBtn = document.getElementById('record-btn');
+    const transcriptDiv = document.getElementById('transcript');
     let isRecording = false;
+    let recognition;
 
-    function initRecognition() {
-      recognition = new window.SpeechRecognition();
-      recognition.continuous = true;            // Nhận liên tục
-      recognition.interimResults = true;        // Nhận kết quả interim
-      recognition.lang = "vi-VN";               // Ngôn ngữ tiếng Việt
+    // Kiểm tra hỗ trợ trình duyệt
+    if (!('webkitSpeechRecognition' in window)) {
+      transcriptDiv.innerHTML = 'Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.';
+      recordBtn.disabled = true;
+    } else {
+      recognition = new webkitSpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'vi-VN';
 
-      recognition.onstart = () => {
-        statusSpan.textContent = "Đang nghe...";
+      recognition.onresult = (event) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        transcriptDiv.innerHTML = finalTranscript + '<em style="color:gray">' + interimTranscript + '</em>';
       };
 
       recognition.onerror = (event) => {
-        console.error("Recognition error:", event.error);
-        statusSpan.textContent = "Lỗi: " + event.error;
-      };
-
-      recognition.onend = () => {
-        // Khi người dùng nhấn dừng hoặc kết nối bị ngắt
-        if (isRecording) {
-          statusSpan.textContent = "Đã dừng.";
-          isRecording = false;
-          recordBtn.textContent = "🎤 Bắt đầu nói";
-          recordBtn.classList.remove("recording");
-        }
-      };
-
-      recognition.onresult = (event) => {
-        // Xử lý interim và final transcripts
-        let interim = "";
-        let finalText = "";
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalText += transcript + " ";
-          } else {
-            interim += transcript;
-          }
-        }
-        transcriptDiv.textContent = finalText + "\n" + "%c[" + interim + "]";
+        console.error('Recognition error:', event.error);
       };
     }
 
-    recordBtn.addEventListener("click", () => {
-      if (!isRecording) {
-        initRecognition();
-        recognition.start();
-        isRecording = true;
-        recordBtn.textContent = "■ Dừng nói";
-        recordBtn.classList.add("recording");
-      } else {
+    recordBtn.addEventListener('click', () => {
+      if (isRecording) {
         recognition.stop();
+        recordBtn.textContent = '🎤 Bắt đầu nói';
+        recordBtn.classList.remove('recording');
+      } else {
+        recognition.start();
+        recordBtn.textContent = '■ Dừng ghi âm';
+        recordBtn.classList.add('recording');
       }
+      isRecording = !isRecording;
     });
   </script>
 </body>
