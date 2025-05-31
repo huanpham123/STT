@@ -1,55 +1,52 @@
 import os
 import uuid
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 import speech_recognition as sr
 
-# Tạo Flask app
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 
-# Giới hạn upload size (nếu muốn, ví dụ 5 MB)
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB
-
+# Cấu hình
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5MB
 TMP_DIR = "/tmp"
 os.makedirs(TMP_DIR, exist_ok=True)
 
+@app.route("/", methods=["GET"])
+def index():
+    """Trang chủ hiển thị giao diện Web Speech API"""
+    return render_template("STT.html")
 
-# Route "/" (Vercel sẽ tự map /api/transcribe → /)
-@app.route("/", methods=["POST"])
+@app.route("/api/transcribe", methods=["POST"])
 def transcribe():
-    # Kiểm tra có field audio_data hay không
+    """API endpoint cho nhận dạng giọng nói"""
     if "audio_data" not in request.files:
-        return jsonify({"transcript": ""}), 200
+        return jsonify({"error": "Missing audio file"}), 400
 
-    wav_file = request.files["audio_data"]
-    if wav_file.filename == "" or not wav_file.filename.lower().endswith(".wav"):
-        return jsonify({"transcript": ""}), 200
+    audio_file = request.files["audio_data"]
+    if not audio_file.filename.lower().endswith(".wav"):
+        return jsonify({"error": "Invalid file type"}), 400
 
     # Lưu file tạm
-    unique_name = f"{uuid.uuid4().hex}.wav"
-    tmp_path = os.path.join(TMP_DIR, unique_name)
-    try:
-        wav_file.save(tmp_path)
-    except:
-        return jsonify({"transcript": ""}), 200
+    temp_path = os.path.join(TMP_DIR, f"{uuid.uuid4()}.wav")
+    audio_file.save(temp_path)
 
+    # Nhận dạng giọng nói
     recognizer = sr.Recognizer()
-    transcript_text = ""
+    transcript = ""
+    
     try:
-        with sr.AudioFile(tmp_path) as source:
+        with sr.AudioFile(temp_path) as source:
             audio_data = recognizer.record(source)
-        # Nhận dạng với Google Speech Recognition (offline/online tùy cài đặt)
-        transcript_text = recognizer.recognize_google(audio_data, language="vi-VN")
-    except Exception:
-        transcript_text = ""
+            transcript = recognizer.recognize_google(audio_data, language="vi-VN")
+    except sr.UnknownValueError:
+        transcript = ""
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        transcript = ""
     finally:
-        # Xóa file tạm
-        try:
-            os.remove(tmp_path)
-        except:
-            pass
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
-    return jsonify({"transcript": transcript_text}), 200
+    return jsonify({"transcript": transcript})
 
-
-# Vercel yêu cầu biến application để khởi Flask
+# Vercel yêu cầu biến application
 application = app
