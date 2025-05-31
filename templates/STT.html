@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>STT Demo (Flask + speech_recognition) trên Vercel</title>
-
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -40,11 +39,6 @@
       white-space: pre-wrap;
     }
   </style>
-
-  <!-- Nhúng Recorder.js (phiên bản 0.1.0) để xuất WAV trực tiếp -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/recorderjs/0.1.0/recorder.min.js"
-          integrity="sha512-AEAywwOWVkFMKLM5TaZ4VWA8KYdtc2tOfNQZvrCXcYHR4N6tUaO50O54B24sJn6z5ktdCX6UisHaXN/RJM13ig=="
-          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
   <h1>Demo STT (Flask + speech_recognition) trên Vercel</h1>
@@ -57,15 +51,12 @@
   <div id="transcript">Bản phiên âm sẽ hiện ở đây …</div>
 
   <script>
-    // Kiểm tra xem Recorder có được tải chưa
-    if (typeof Recorder === 'undefined') {
-      alert("Không tìm thấy thư viện Recorder.js. Vui lòng kiểm tra lại đường dẫn script.");
-    }
-
+    // Thiết lập biến toàn cục cho ghi âm và chuyển WAV
     let audioContext;
-    let gumStream;
-    let inputPoint;
-    let recorder;
+    let microphoneStream;
+    let scriptProcessor;
+    let audioDataBuffer = [];
+    const SAMPLE_RATE = 16000; // Deepgram / speech_recognition yêu cầu 16kHz
 
     const recordBtn = document.getElementById("record-btn");
     const statusSpan = document.getElementById("status");
@@ -80,42 +71,147 @@
       }
     });
 
-    function startRecording() {
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(stream => {
-          audioContext = new (window.AudioContext || window.webkitAudioContext)();
-          gumStream = stream;
-          inputPoint = audioContext.createMediaStreamSource(stream);
+    async function startRecording() {
+      try {
+        // Yêu cầu quyền truy cập microphone
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Tạo AudioContext với sample rate mặc định (không nhất thiết 16kHz)
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        microphoneStream = audioContext.createMediaStreamSource(stream);
 
-          // Khởi tạo Recorder.js (ghi PCM mono)
-          recorder = new Recorder(inputPoint, { numChannels: 1 });
-          recorder.record();
+        // Sử dụng ScriptProcessorNode để lấy tín hiệu PCM
+        // bufferSize: 4096 sample, channel count = 1 (mono)
+        scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+        microphoneStream.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
 
-          isRecording = true;
-          recordBtn.textContent = "■ Dừng ghi âm";
-          recordBtn.classList.add("recording");
-          statusSpan.textContent = "Đang ghi âm...";
-          transcriptDiv.textContent = "";
-        })
-        .catch(err => {
-          console.error("Không thể truy cập microphone: " + err);
-          alert("Không thể truy cập microphone: " + err);
-        });
+        audioDataBuffer = [];
+
+        scriptProcessor.onaudioprocess = event => {
+          // Lấy dữ liệu Float32Array (kênh mono)
+          const inputBuffer = event.inputBuffer.getChannelData(0);
+          // Chuyển từ Float32 [-1..1] sang PCM16 (Int16)
+          const downsampledBuffer = downsampleBuffer(inputBuffer, audioContext.sampleRate, SAMPLE_RATE);
+          if (downsampledBuffer) {
+            audioDataBuffer.push(downsampledBuffer);
+          }
+        };
+
+        isRecording = true;
+        recordBtn.textContent = "■ Dừng ghi âm";
+        recordBtn.classList.add("recording");
+        statusSpan.textContent = "Đang ghi âm...";
+        transcriptDiv.textContent = "";
+      } catch (err) {
+        console.error("Không thể truy cập microphone:", err);
+        alert("Không thể truy cập microphone: " + err);
+      }
     }
 
     function stopRecording() {
-      recorder.stop();
-      gumStream.getAudioTracks()[0].stop();
+      // Ngắt kết nối microphone và ScriptProcessor
+      scriptProcessor.disconnect();
+      microphoneStream.disconnect();
+      audioContext.close();
 
+      isRecording = false;
       recordBtn.textContent = "🎤 Bắt đầu ghi âm";
       recordBtn.classList.remove("recording");
       statusSpan.textContent = "Đang xử lý…";
 
-      recorder.exportWAV(blob => {
-        sendToServer(blob);
-      });
+      // Ghép tất cả mảng Int16Array thành một Blob WAV
+      const wavBlob = encodeWAV(audioDataBuffer, SAMPLE_RATE);
+      sendToServer(wavBlob);
+    }
 
-      isRecording = false;
+    // Hàm downsample Float32Array (sampleRate → targetRate), trả về Int16Array
+    function downsampleBuffer(buffer, inputRate, outputRate) {
+      if (outputRate === inputRate) {
+        // Chuyển trực tiếp Float32 [-1..1] sang Int16
+        const int16 = new Int16Array(buffer.length);
+        for (let i = 0; i < buffer.length; i++) {
+          const s = Math.max(-1, Math.min(1, buffer[i]));
+          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        return int16;
+      }
+      const sampleRateRatio = inputRate / outputRate;
+      const newLength = Math.round(buffer.length / sampleRateRatio);
+      const result = new Int16Array(newLength);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while (offsetResult < newLength) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+        let sum = 0, count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+          sum += buffer[i];
+          count++;
+        }
+        const avg = sum / count;
+        result[offsetResult] = avg < 0 ? avg * 0x8000 : avg * 0x7FFF;
+        offsetResult++;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return result;
+    }
+
+    // Hàm tạo Blob WAV từ mảng Int16Array[]
+    function encodeWAV(buffers, sampleRate) {
+      // Tính tổng length
+      let totalSamples = 0;
+      for (let i = 0; i < buffers.length; i++) {
+        totalSamples += buffers[i].length;
+      }
+      const bytesPerSample = 2;
+      const blockAlign = 1 * bytesPerSample;
+      const byteRate = sampleRate * blockAlign;
+      const dataSize = totalSamples * bytesPerSample;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      /* RIFF identifier */
+      writeString(view, 0, "RIFF");
+      /* file length */
+      view.setUint32(4, 36 + dataSize, true);
+      /* RIFF type */
+      writeString(view, 8, "WAVE");
+      /* format chunk identifier */
+      writeString(view, 12, "fmt ");
+      /* format chunk length */
+      view.setUint32(16, 16, true);
+      /* sample format (raw) */
+      view.setUint16(20, 1, true);
+      /* channel count */
+      view.setUint16(22, 1, true); // mono
+      /* sample rate */
+      view.setUint32(24, sampleRate, true);
+      /* byte rate (sampleRate * blockAlign) */
+      view.setUint32(28, byteRate, true);
+      /* block align (channelCount * bytesPerSample) */
+      view.setUint16(32, blockAlign, true);
+      /* bits per sample */
+      view.setUint16(34, 16, true);
+      /* data chunk identifier */
+      writeString(view, 36, "data");
+      /* data chunk length */
+      view.setUint32(40, dataSize, true);
+
+      // Ghi PCM samples
+      let offset = 44;
+      for (let i = 0; i < buffers.length; i++) {
+        const buffer16 = buffers[i];
+        for (let j = 0; j < buffer16.length; j++, offset += 2) {
+          view.setInt16(offset, buffer16[j], true);
+        }
+      }
+
+      return new Blob([view], { type: "audio/wav" });
+    }
+
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
     }
 
     function sendToServer(wavBlob) {
