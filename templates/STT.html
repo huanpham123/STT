@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>STT Demo (Flask + speech_recognition) trên Vercel</title>
+  <title>Demo STT (Flask + speech_recognition)</title>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -51,12 +52,12 @@
   <div id="transcript">Bản phiên âm sẽ hiện ở đây …</div>
 
   <script>
-    // Thiết lập biến toàn cục cho ghi âm và chuyển WAV
+    // --- Toàn cục để ghi âm và chuyển WAV ---
     let audioContext;
-    let microphoneStream;
+    let micStream;
     let scriptProcessor;
-    let audioDataBuffer = [];
-    const SAMPLE_RATE = 16000; // Deepgram / speech_recognition yêu cầu 16kHz
+    let bufferData = [];
+    const TARGET_SAMPLE_RATE = 16000; // 16kHz, phù hợp speech_recognition
 
     const recordBtn = document.getElementById("record-btn");
     const statusSpan = document.getElementById("status");
@@ -73,27 +74,23 @@
 
     async function startRecording() {
       try {
-        // Yêu cầu quyền truy cập microphone
+        // 1) Xin quyền mic
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Tạo AudioContext với sample rate mặc định (không nhất thiết 16kHz)
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        microphoneStream = audioContext.createMediaStreamSource(stream);
+        micStream = audioContext.createMediaStreamSource(stream);
 
-        // Sử dụng ScriptProcessorNode để lấy tín hiệu PCM
-        // bufferSize: 4096 sample, channel count = 1 (mono)
+        // 2) Tạo ScriptProcessor để lấy PCM Float32
         scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-        microphoneStream.connect(scriptProcessor);
+        micStream.connect(scriptProcessor);
         scriptProcessor.connect(audioContext.destination);
 
-        audioDataBuffer = [];
+        bufferData = []; // Xóa buffer
 
         scriptProcessor.onaudioprocess = event => {
-          // Lấy dữ liệu Float32Array (kênh mono)
-          const inputBuffer = event.inputBuffer.getChannelData(0);
-          // Chuyển từ Float32 [-1..1] sang PCM16 (Int16)
-          const downsampledBuffer = downsampleBuffer(inputBuffer, audioContext.sampleRate, SAMPLE_RATE);
-          if (downsampledBuffer) {
-            audioDataBuffer.push(downsampledBuffer);
+          const input = event.inputBuffer.getChannelData(0); // Float32Array
+          const downsampled = downsampleBuffer(input, audioContext.sampleRate, TARGET_SAMPLE_RATE);
+          if (downsampled) {
+            bufferData.push(downsampled);
           }
         };
 
@@ -109,9 +106,9 @@
     }
 
     function stopRecording() {
-      // Ngắt kết nối microphone và ScriptProcessor
+      // 1) Ngắt processor và mic
       scriptProcessor.disconnect();
-      microphoneStream.disconnect();
+      micStream.disconnect();
       audioContext.close();
 
       isRecording = false;
@@ -119,29 +116,30 @@
       recordBtn.classList.remove("recording");
       statusSpan.textContent = "Đang xử lý…";
 
-      // Ghép tất cả mảng Int16Array thành một Blob WAV
-      const wavBlob = encodeWAV(audioDataBuffer, SAMPLE_RATE);
+      // 2) Gộp bufferData thành WAV Blob
+      const wavBlob = encodeWAV(bufferData, TARGET_SAMPLE_RATE);
+      // 3) Gửi lên /transcribe
       sendToServer(wavBlob);
     }
 
-    // Hàm downsample Float32Array (sampleRate → targetRate), trả về Int16Array
+    // Hàm downsample Float32Array từ inputRate → outputRate,
+    // trả về Int16Array
     function downsampleBuffer(buffer, inputRate, outputRate) {
       if (outputRate === inputRate) {
-        // Chuyển trực tiếp Float32 [-1..1] sang Int16
         const int16 = new Int16Array(buffer.length);
         for (let i = 0; i < buffer.length; i++) {
-          const s = Math.max(-1, Math.min(1, buffer[i]));
+          let s = Math.max(-1, Math.min(1, buffer[i]));
           int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
         return int16;
       }
-      const sampleRateRatio = inputRate / outputRate;
-      const newLength = Math.round(buffer.length / sampleRateRatio);
+      const ratio = inputRate / outputRate;
+      const newLength = Math.round(buffer.length / ratio);
       const result = new Int16Array(newLength);
       let offsetResult = 0;
       let offsetBuffer = 0;
       while (offsetResult < newLength) {
-        const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
         let sum = 0, count = 0;
         for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
           sum += buffer[i];
@@ -155,9 +153,8 @@
       return result;
     }
 
-    // Hàm tạo Blob WAV từ mảng Int16Array[]
+    // Hàm tạo WAV Blob từ mảng Int16Array[]
     function encodeWAV(buffers, sampleRate) {
-      // Tính tổng length
       let totalSamples = 0;
       for (let i = 0; i < buffers.length; i++) {
         totalSamples += buffers[i].length;
@@ -169,48 +166,37 @@
       const buffer = new ArrayBuffer(44 + dataSize);
       const view = new DataView(buffer);
 
-      /* RIFF identifier */
+      // RIFF header
       writeString(view, 0, "RIFF");
-      /* file length */
       view.setUint32(4, 36 + dataSize, true);
-      /* RIFF type */
       writeString(view, 8, "WAVE");
-      /* format chunk identifier */
+      // fmt chunk
       writeString(view, 12, "fmt ");
-      /* format chunk length */
-      view.setUint32(16, 16, true);
-      /* sample format (raw) */
-      view.setUint16(20, 1, true);
-      /* channel count */
-      view.setUint16(22, 1, true); // mono
-      /* sample rate */
+      view.setUint32(16, 16, true);      // Subchunk1Size = 16 (PCM)
+      view.setUint16(20, 1, true);       // AudioFormat = 1 (PCM)
+      view.setUint16(22, 1, true);       // NumChannels = 1
       view.setUint32(24, sampleRate, true);
-      /* byte rate (sampleRate * blockAlign) */
       view.setUint32(28, byteRate, true);
-      /* block align (channelCount * bytesPerSample) */
       view.setUint16(32, blockAlign, true);
-      /* bits per sample */
-      view.setUint16(34, 16, true);
-      /* data chunk identifier */
+      view.setUint16(34, 16, true);      // BitsPerSample = 16
+      // data chunk
       writeString(view, 36, "data");
-      /* data chunk length */
       view.setUint32(40, dataSize, true);
 
       // Ghi PCM samples
       let offset = 44;
       for (let i = 0; i < buffers.length; i++) {
-        const buffer16 = buffers[i];
-        for (let j = 0; j < buffer16.length; j++, offset += 2) {
-          view.setInt16(offset, buffer16[j], true);
+        const buf = buffers[i];
+        for (let j = 0; j < buf.length; j++, offset += 2) {
+          view.setInt16(offset, buf[j], true);
         }
       }
-
       return new Blob([view], { type: "audio/wav" });
     }
 
-    function writeString(view, offset, string) {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
+    function writeString(view, offset, str) {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
       }
     }
 
@@ -222,7 +208,7 @@
         method: "POST",
         body: fd
       })
-      .then(response => response.json())
+      .then(resp => resp.json())
       .then(data => {
         if (data.transcript !== undefined) {
           transcriptDiv.textContent = data.transcript;
