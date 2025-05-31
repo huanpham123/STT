@@ -41,7 +41,7 @@
     }
   </style>
 
-  <!-- Thư viện Recorder.js (phiên bản 0.1.0) để xuất WAV trực tiếp -->
+  <!-- Nhúng Recorder.js (phiên bản 0.1.0) để xuất WAV trực tiếp -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recorderjs/0.1.0/recorder.min.js"
           integrity="sha512-AEAywwOWVkFMKLM5TaZ4VWA8KYdtc2tOfNQZvrCXcYHR4N6tUaO50O54B24sJn6z5ktdCX6UisHaXN/RJM13ig=="
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
@@ -57,6 +57,11 @@
   <div id="transcript">Bản phiên âm sẽ hiện ở đây …</div>
 
   <script>
+    // Kiểm tra xem Recorder có được tải chưa
+    if (typeof Recorder === 'undefined') {
+      alert("Không tìm thấy thư viện Recorder.js. Vui lòng kiểm tra lại đường dẫn script.");
+    }
+
     let audioContext;
     let gumStream;
     let inputPoint;
@@ -82,7 +87,7 @@
           gumStream = stream;
           inputPoint = audioContext.createMediaStreamSource(stream);
 
-          // Khởi Recorder.js (ghi PCM mono)
+          // Khởi tạo Recorder.js (ghi PCM mono)
           recorder = new Recorder(inputPoint, { numChannels: 1 });
           recorder.record();
 
