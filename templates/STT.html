@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Flask STT Demo (SpeechRecognition)</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+    #controls {
+      margin-bottom: 15px;
+    }
+    #record-btn {
+      padding: 10px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 4px;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+    }
+    #record-btn.recording {
+      background-color: #dc3545;
+    }
+    #status {
+      margin-left: 10px;
+      font-weight: bold;
+    }
+    #transcript {
+      margin-top: 20px;
+      font-size: 18px;
+      color: #333;
+      white-space: pre-wrap;
+    }
+  </style>
+
+  <!-- Tôi dùng Recorder.js (phiên bản 0.1.0) để xuất WAV trực tiếp -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recorderjs/0.1.0/recorder.min.js"
+          integrity="sha512-AEAywwOWVkFMKLM5TaZ4VWA8KYdtc2tOfNQZvrCXcYHR4N6tUaO50O54B24sJn6z5ktdCX6UisHaXN/RJM13ig=="
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+  <h1>Demo STT (Flask + speech_recognition)</h1>
+
+  <div id="controls">
+    <button id="record-btn">🎤 Bắt đầu ghi âm</button>
+    <span id="status">Chưa ghi âm</span>
+  </div>
+
+  <div id="transcript">Bản phiên âm sẽ hiện ở đây …</div>
+
+  <script>
+    // --- Biến toàn cục cho ghi âm ---
+    let audioContext;
+    let gumStream;
+    let inputPoint;
+    let recorder;
+
+    const recordBtn = document.getElementById("record-btn");
+    const statusSpan = document.getElementById("status");
+    const transcriptDiv = document.getElementById("transcript");
+
+    let isRecording = false;
+
+    recordBtn.addEventListener("click", () => {
+      if (!isRecording) {
+        startRecording();
+      } else {
+        stopRecording();
+      }
+    });
+
+    function startRecording() {
+      // Yêu cầu quyền sử dụng microphone
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          gumStream = stream;
+          inputPoint = audioContext.createMediaStreamSource(stream);
+
+          // Khởi tạo Recorder.js (ghi RAW PCM và xuất WAV)
+          recorder = new Recorder(inputPoint, { numChannels: 1 });
+          recorder.record();
+
+          isRecording = true;
+          recordBtn.textContent = "■ Dừng ghi âm";
+          recordBtn.classList.add("recording");
+          statusSpan.textContent = "Đang ghi âm...";
+          transcriptDiv.textContent = "";
+        })
+        .catch(err => {
+          console.error("Không thể truy cập microphone: " + err);
+          alert("Không thể truy cập microphone: " + err);
+        });
+    }
+
+    function stopRecording() {
+      // Dừng thu, tạo Blob WAV
+      recorder.stop();
+      gumStream.getAudioTracks()[0].stop();
+
+      recordBtn.textContent = "🎤 Bắt đầu ghi âm";
+      recordBtn.classList.remove("recording");
+      statusSpan.textContent = "Đang xử lý…";
+
+      // Xuất blob WAV
+      recorder.exportWAV(blob => {
+        // Gửi blob WAV lên server để transcribe
+        sendToServer(blob);
+      });
+
+      isRecording = false;
+    }
+
+    function sendToServer(wavBlob) {
+      // Tạo FormData và đính kèm file WAV
+      const fd = new FormData();
+      fd.append("audio_data", wavBlob, "recording.wav");
+
+      fetch("/transcribe", {
+        method: "POST",
+        body: fd
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.transcript !== undefined) {
+          transcriptDiv.textContent = data.transcript;
+          statusSpan.textContent = "Hoàn tất.";
+        } else if (data.error) {
+          transcriptDiv.textContent = "Lỗi: " + data.error;
+          statusSpan.textContent = "Lỗi.";
+        } else {
+          transcriptDiv.textContent = "Không nhận được transcript.";
+          statusSpan.textContent = "Xong.";
+        }
+      })
+      .catch(err => {
+        console.error("Lỗi gửi lên server:", err);
+        transcriptDiv.textContent = "Lỗi khi gọi /transcribe: " + err;
+        statusSpan.textContent = "Lỗi.";
+      });
+    }
+  </script>
+</body>
+</html>
