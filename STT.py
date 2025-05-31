@@ -13,9 +13,9 @@ os.makedirs(TMP_DIR, exist_ok=True)
 @app.route("/", methods=["GET"])
 def index():
     """
-    Khi GET /, render file templates/index.html.
+    Khi GET /, render file templates/STT.html.
     """
-    return render_template("index.html")
+    return render_template("STT.html")
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
