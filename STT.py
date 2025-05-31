@@ -3,16 +3,20 @@ import uuid
 from flask import Flask, request, jsonify
 import speech_recognition as sr
 
+# Tạo Flask app
 app = Flask(__name__)
 
-# Giới hạn upload size (nếu muốn)
+# Giới hạn upload size (nếu muốn, ví dụ 5 MB)
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB
 
 TMP_DIR = "/tmp"
 os.makedirs(TMP_DIR, exist_ok=True)
 
-@app.route("/transcribe", methods=["POST"])
+
+# Route "/" (Vercel sẽ tự map /api/transcribe → /)
+@app.route("/", methods=["POST"])
 def transcribe():
+    # Kiểm tra có field audio_data hay không
     if "audio_data" not in request.files:
         return jsonify({"transcript": ""}), 200
 
@@ -33,10 +37,12 @@ def transcribe():
     try:
         with sr.AudioFile(tmp_path) as source:
             audio_data = recognizer.record(source)
+        # Nhận dạng với Google Speech Recognition (offline/online tùy cài đặt)
         transcript_text = recognizer.recognize_google(audio_data, language="vi-VN")
     except Exception:
         transcript_text = ""
     finally:
+        # Xóa file tạm
         try:
             os.remove(tmp_path)
         except:
@@ -44,4 +50,6 @@ def transcribe():
 
     return jsonify({"transcript": transcript_text}), 200
 
-# Lưu ý: Không gọi app.run() – Vercel sẽ tự động khởi.
+
+# Vercel yêu cầu biến application để khởi Flask
+application = app
