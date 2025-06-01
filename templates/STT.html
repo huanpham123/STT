@@ -45,10 +45,17 @@
       gap: 8px;
     }
     
-    #record-btn:hover {
+    #record-btn:hover:not(:disabled) {
       background-color: #2980b9;
       transform: translateY(-2px);
       box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    #record-btn:disabled {
+        background-color: #bdc3c7;
+        cursor: not-allowed;
+        box-shadow: none;
+        transform: none;
     }
     
     #record-btn.recording {
@@ -76,24 +83,28 @@
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
       font-size: 16px;
       line-height: 1.8;
+      word-wrap: break-word;
     }
     
     #status-bar {
       margin-top: 20px;
-      padding: 10px;
-      border-radius: 5px;
-      background-color: #f8f9fa;
+      padding: 10px 15px;
+      border-radius: 8px;
+      background-color: #e9ecef; /* Light grey background */
       text-align: center;
       font-size: 14px;
-      color: #7f8c8d;
+      color: #495057; /* Darker grey text */
       display: flex;
       justify-content: space-between;
+      align-items: center;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
     }
     
     #connection-status {
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 8px; /* Increased gap */
+      font-weight: 500;
     }
     
     .status-indicator {
@@ -101,26 +112,35 @@
       height: 12px;
       border-radius: 50%;
       display: inline-block;
+      transition: background-color 0.5s ease;
     }
     
     .status-active {
-      background-color: #2ecc71;
-      animation: blink 2s infinite;
+      background-color: #2ecc71; /* Green for active */
+      animation: blink 2s infinite ease-in-out;
     }
     
     .status-inactive {
-      background-color: #95a5a6;
+      background-color: #e74c3c; /* Red for inactive/error */
+    }
+    .status-connecting {
+        background-color: #f39c12; /* Orange for connecting */
+        animation: blink-connecting 1s infinite ease-in-out;
     }
     
     @keyframes blink {
-      0% { opacity: 1; }
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.8); }
+    }
+    @keyframes blink-connecting {
+      0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
-      100% { opacity: 1; }
     }
     
     #server-stats {
-      font-family: 'Courier New', monospace;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
       font-size: 13px;
+      color: #6c757d; /* Medium grey text */
     }
     
     .interim {
@@ -131,6 +151,12 @@
     .mic-icon {
       width: 20px;
       height: 20px;
+      vertical-align: middle;
+    }
+    .error-message {
+        color: #e74c3c;
+        font-weight: bold;
+        margin-top: 5px;
     }
   </style>
 </head>
@@ -138,7 +164,7 @@
   <h1>Speech to Text - ESP32 Integration</h1>
   
   <div id="controls">
-    <button id="record-btn">
+    <button id="record-btn" title="Nhấn để bắt đầu hoặc dừng ghi âm">
       <svg class="mic-icon" viewBox="0 0 24 24">
         <path fill="currentColor" d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z" />
       </svg>
@@ -150,50 +176,60 @@
   
   <div id="status-bar">
     <div id="connection-status">
-      <span class="status-indicator status-active"></span>
-      <span>Kết nối server</span>
+      <span class="status-indicator status-connecting"></span>
+      <span>Đang kiểm tra server...</span>
     </div>
-    <div id="server-stats">Last ping: -- | Pool: --</div>
+    <div id="server-stats">Ping: -- | Pool: -- | Threads: --</div>
   </div>
 
   <script>
     // ========================================
-    // === WEB SPEECH API IMPLEMENTATION ===
+    // === DOM ELEMENTS & STATE VARIABLES ===
     // ========================================
     const recordBtn = document.getElementById('record-btn');
     const transcriptDiv = document.getElementById('transcript');
-    const connectionStatus = document.getElementById('connection-status');
-    const statusIndicator = document.querySelector('.status-indicator');
-    const serverStats = document.getElementById('server-stats');
+    const connectionStatusDiv = document.getElementById('connection-status');
+    const statusIndicator = connectionStatusDiv.querySelector('.status-indicator');
+    const serverStatsDiv = document.getElementById('server-stats');
+    
     let isRecording = false;
     let recognition;
-    let lastPingTime = 0;
     let serverReady = false;
+    let currentPingInterval; // Sẽ được set bởi logic ping
+    let pingTimeoutId = null;
+    let consecutivePingFailures = 0;
 
-    // Kiểm tra trình duyệt hỗ trợ
-    if (!('webkitSpeechRecognition' in window) {
-      transcriptDiv.innerHTML = '⚠️ Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng sử dụng Chrome/Edge mới nhất.';
+    const NORMAL_PING_INTERVAL = 60 * 1000; // 1 phút
+    const AGGRESSIVE_PING_INTERVAL = 30 * 1000; // 30 giây khi có lỗi
+    const MAX_PING_FAILURES_FOR_AGGRESSIVE = 2; // Chuyển sang aggressive sau 2 lỗi liên tiếp
+
+    const MIC_SVG_PATH = "M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z";
+
+    // ========================================
+    // === WEB SPEECH API IMPLEMENTATION ===
+    // ========================================
+    if (!('webkitSpeechRecognition' in window)) { // SỬA LỖI: Thêm dấu ngoặc )
+      transcriptDiv.innerHTML = '<div class="error-message">⚠️ Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng sử dụng Chrome hoặc Edge mới nhất.</div>';
       recordBtn.disabled = true;
-      connectionStatus.innerHTML = '<span class="status-indicator status-inactive"></span> Trình duyệt không hỗ trợ';
+      updateServerStatusUI(false, "Trình duyệt không hỗ trợ");
     } else {
       initSpeechRecognition();
     }
 
     function initSpeechRecognition() {
       recognition = new webkitSpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
+      recognition.continuous = true; // Tiếp tục nhận dạng ngay cả khi có khoảng lặng ngắn
+      recognition.interimResults = true; // Hiển thị kết quả tạm thời
       recognition.lang = 'vi-VN';
 
       recognition.onstart = () => {
         isRecording = true;
         recordBtn.innerHTML = `
-          <svg class="mic-icon" viewBox="0 0 24 24">
-            <path fill="currentColor" d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z" />
-          </svg>
+          <svg class="mic-icon" viewBox="0 0 24 24"><path fill="currentColor" d="${MIC_SVG_PATH}" /></svg>
           Đang ghi âm...
         `;
         recordBtn.classList.add('recording');
+        transcriptDiv.innerHTML = 'Đang lắng nghe...'; // Xóa kết quả cũ khi bắt đầu mới
       };
 
       recognition.onresult = (event) => {
@@ -201,64 +237,56 @@
         let finalTranscript = '';
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
+          const transcriptSegment = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += transcript;
+            finalTranscript += transcriptSegment + '. '; // Thêm dấu chấm cho rõ ràng
           } else {
-            interimTranscript += transcript;
+            interimTranscript += transcriptSegment;
           }
         }
         
         transcriptDiv.innerHTML = finalTranscript + 
-          (interimTranscript ? `<span class="interim"><br>${interimTranscript}</span>` : '');
+          (interimTranscript ? `<span class="interim"><br><i>${interimTranscript}</i></span>` : '');
       };
 
       recognition.onerror = (event) => {
-        let errorMessage = 'Lỗi: ';
+        let errorMessage = 'Lỗi Speech API: ';
         switch(event.error) {
-          case 'no-speech':
-            errorMessage += 'Không phát hiện giọng nói';
-            break;
-          case 'audio-capture':
-            errorMessage += 'Không thể truy cập microphone';
-            break;
-          case 'not-allowed':
-            errorMessage += 'Microphone bị chặn';
-            break;
-          default:
-            errorMessage += event.error;
+          case 'no-speech': errorMessage += 'Không phát hiện được giọng nói. Vui lòng thử lại.'; break;
+          case 'audio-capture': errorMessage += 'Không thể truy cập microphone. Kiểm tra quyền và thiết bị.'; break;
+          case 'not-allowed': errorMessage += 'Quyền truy cập microphone bị từ chối. Vui lòng cấp quyền trong cài đặt trình duyệt.'; break;
+          case 'network': errorMessage += 'Lỗi mạng trong quá trình nhận dạng. Kiểm tra kết nối internet.'; break;
+          default: errorMessage += event.error;
         }
-        transcriptDiv.innerHTML += `<div style="color:#e74c3c">${errorMessage}</div>`;
+        transcriptDiv.innerHTML += `<div class="error-message">${errorMessage}</div>`;
+        console.error("Speech Recognition Error:", event);
       };
 
       recognition.onend = () => {
         isRecording = false;
         recordBtn.innerHTML = `
-          <svg class="mic-icon" viewBox="0 0 24 24">
-            <path fill="currentColor" d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z" />
-          </svg>
+          <svg class="mic-icon" viewBox="0 0 24 24"><path fill="currentColor" d="${MIC_SVG_PATH}" /></svg>
           Bắt đầu nói
         `;
         recordBtn.classList.remove('recording');
       };
     }
 
-    recordBtn.addEventListener('click', () => {
+    recordBtn.addEventListener('click', async () => {
       if (!recognition) return;
       
       if (isRecording) {
         recognition.stop();
       } else {
         if (!serverReady) {
-          transcriptDiv.innerHTML = '⏳ Đang kết nối với server...';
-          checkServerReady().then(ready => {
-            if (ready) {
-              transcriptDiv.innerHTML = 'Đang lắng nghe...';
-              recognition.start();
-            } else {
-              transcriptDiv.innerHTML = '❌ Không thể kết nối server. Vui lòng thử lại sau.';
-            }
-          });
+          transcriptDiv.innerHTML = '⏳ Đang kiểm tra server trước khi ghi âm...';
+          const ready = await performPing('/api/ping', { 'X-Health-Check': 'true' }, "Health-Check");
+          if (ready) {
+            transcriptDiv.innerHTML = 'Đang lắng nghe...';
+            recognition.start();
+          } else {
+            transcriptDiv.innerHTML = '<div class="error-message">❌ Không thể kết nối server. Vui lòng thử lại sau hoặc kiểm tra trạng thái server.</div>';
+          }
         } else {
           transcriptDiv.innerHTML = 'Đang lắng nghe...';
           recognition.start();
@@ -267,123 +295,112 @@
     });
 
     // ========================================
-    // === SERVER KEEP-ALIVE IMPLEMENTATION ===
+    // === SERVER KEEP-ALIVE & STATUS CHECK ===
     // ========================================
-    const PING_INTERVAL = 60 * 1000; // 1 phút
-    const AGGRESSIVE_PING_INTERVAL = 30 * 1000; // 30s khi phát hiện lỗi
-    let pingInterval = PING_INTERVAL;
-    let retryCount = 0;
-    const MAX_RETRIES = 3;
-
-    async function checkServerReady() {
+    async function performPing(url, headers, pingType) {
+      const startTime = Date.now();
       try {
-        const response = await fetch('/api/ping', {
+        const response = await fetch(url, {
           method: 'GET',
-          cache: 'no-store',
-          headers: { 'X-Health-Check': 'true' }
+          cache: 'no-store', // Luôn lấy dữ liệu mới nhất
+          headers: headers
         });
+        
+        const pingTimeMs = Date.now() - startTime;
         
         if (response.ok) {
           const data = await response.json();
-          updateServerStatus(true, data);
-          return true;
-        }
-      } catch (error) {
-        console.error('Server check failed:', error);
-      }
-      updateServerStatus(false);
-      return false;
-    }
-
-    async function pingServer() {
-      try {
-        const startTime = Date.now();
-        const response = await fetch('/api/ping', {
-          method: 'GET',
-          cache: 'no-store',
-          headers: { 'X-Keep-Alive': 'true' }
-        });
-        
-        const pingTime = Date.now() - startTime;
-        lastPingTime = Date.now();
-        
-        if (response.ok) {
-          const data = await response.json();
-          updateServerStatus(true, data);
-          retryCount = 0;
-          
-          // Log thông tin server
-          serverStats.textContent = `Ping: ${pingTime}ms | Pool: ${data.recognizer_pool_size}`;
-          
-          // Nếu đang ở chế độ aggressive và server ổn định
-          if (pingInterval === AGGRESSIVE_PING_INTERVAL && retryCount === 0) {
-            pingInterval = PING_INTERVAL;
-            console.log('Server stable. Returning to normal ping interval');
+          console.log(`${pingType} successful:`, data, `(${pingTimeMs}ms)`);
+          updateServerStatusUI(true, "Server sẵn sàng", data, pingTimeMs);
+          consecutivePingFailures = 0;
+          // Nếu server ổn định, quay lại tần suất ping bình thường
+          if (currentPingInterval === AGGRESSIVE_PING_INTERVAL) {
+            console.log('Server ổn định. Chuyển về tần suất ping bình thường.');
+            currentPingInterval = NORMAL_PING_INTERVAL;
           }
+          return true;
         } else {
-          throw new Error(`HTTP ${response.status}`);
+          console.warn(`${pingType} failed with HTTP ${response.status}: ${response.statusText}`);
+          throw new Error(`HTTP ${response.status}`); // Để catch xử lý
         }
       } catch (error) {
-        console.error('Ping failed:', error);
-        retryCount++;
-        updateServerStatus(false);
+        console.error(`${pingType} error:`, error);
+        consecutivePingFailures++;
+        updateServerStatusUI(false, "Mất kết nối server");
         
-        // Chuyển sang chế độ aggressive nếu lỗi nhiều lần
-        if (retryCount >= MAX_RETRIES && pingInterval !== AGGRESSIVE_PING_INTERVAL) {
-          pingInterval = AGGRESSIVE_PING_INTERVAL;
-          console.warn('Server unstable. Switching to aggressive ping mode');
+        // Chuyển sang tần suất ping aggressive nếu lỗi nhiều lần
+        if (consecutivePingFailures >= MAX_PING_FAILURES_FOR_AGGRESSIVE && currentPingInterval !== AGGRESSIVE_PING_INTERVAL) {
+          console.warn(`Server không ổn định (${consecutivePingFailures} lỗi liên tiếp). Chuyển sang tần suất ping aggressive.`);
+          currentPingInterval = AGGRESSIVE_PING_INTERVAL;
         }
+        return false;
       }
     }
 
-    function updateServerStatus(healthy, data = null) {
-      serverReady = healthy;
+    function updateServerStatusUI(isHealthy, statusText, serverData = null, pingTime = null) {
+      serverReady = isHealthy;
+      let statusIndicatorClass = 'status-inactive';
+      let connectionText = statusText;
+
+      if (isHealthy) {
+        statusIndicatorClass = 'status-active';
+      } else if (statusText === "Đang kiểm tra server..." || statusText === "Đang kết nối lại...") {
+        statusIndicatorClass = 'status-connecting';
+      }
       
-      if (healthy) {
-        statusIndicator.className = 'status-indicator status-active';
-        connectionStatus.innerHTML = `
-          <span class="status-indicator status-active"></span>
-          Server sẵn sàng
-        `;
-        
-        if (data) {
-          serverStats.textContent = `Last ping: ${new Date().toLocaleTimeString()} | Pool: ${data.recognizer_pool_size}`;
-        }
+      statusIndicator.className = `status-indicator ${statusIndicatorClass}`;
+      connectionStatusDiv.innerHTML = `
+        <span class="status-indicator ${statusIndicatorClass}"></span>
+        <span>${connectionText}</span>
+      `;
+      
+      if (serverData) {
+        let pingDisplay = pingTime !== null ? `${pingTime}ms` : (serverData.lastPingTime ? `${Math.round(Date.now() - serverData.lastPingTime)}ms ago` : "--");
+        serverStatsDiv.textContent = `Ping: ${pingDisplay} | Pool: ${serverData.recognizer_pool_size || '--'} | Threads: ${serverData.active_threads || '--'}`;
       } else {
-        statusIndicator.className = 'status-indicator status-inactive';
-        connectionStatus.innerHTML = `
-          <span class="status-indicator status-inactive"></span>
-          Đang kết nối lại...
-        `;
-        serverStats.textContent = 'Đang thử kết nối...';
+        serverStatsDiv.textContent = 'Ping: -- | Pool: -- | Threads: --';
       }
+      recordBtn.disabled = !isHealthy && !isRecording; // Disable nút nếu server không sẵn sàng (trừ khi đang ghi âm)
     }
 
-    // Khởi chạy ping ngay khi load trang
+    function scheduleNextPing() {
+      if (pingTimeoutId) {
+        clearTimeout(pingTimeoutId);
+      }
+      pingTimeoutId = setTimeout(async () => {
+        await performPing('/api/ping', { 'X-Keep-Alive': 'true' }, "Keep-Alive");
+        scheduleNextPing(); // Lên lịch cho lần ping tiếp theo
+      }, currentPingInterval);
+    }
+
+    // Khởi chạy khi trang được load
     document.addEventListener('DOMContentLoaded', () => {
-      pingServer();
-      setInterval(pingServer, pingInterval);
+      currentPingInterval = NORMAL_PING_INTERVAL; // Bắt đầu với tần suất bình thường
+      updateServerStatusUI(false, "Đang kiểm tra server..."); // Trạng thái ban đầu
       
-      // Theo dõi thay đổi pingInterval
-      setInterval(() => {
-        if (retryCount > 0 && pingInterval !== AGGRESSIVE_PING_INTERVAL) {
-          pingInterval = AGGRESSIVE_PING_INTERVAL;
-          console.log('Adjusting ping interval due to errors');
-        }
-      }, 5000);
+      (async () => {
+        // Ping đầu tiên để kiểm tra trạng thái và khởi động vòng lặp
+        await performPing('/api/ping', { 'X-Health-Check': 'true' }, "Initial Health-Check");
+        scheduleNextPing();
+      })();
     });
 
     // ========================================
-    // === OFFLINE DETECTION ===
+    // === OFFLINE/ONLINE DETECTION ===
     // ========================================
     window.addEventListener('online', () => {
-      console.log('Network connection restored');
-      pingServer();
+      console.log('Network connection restored. Pinging server...');
+      updateServerStatusUI(false, "Đang kết nối lại...");
+      performPing('/api/ping', { 'X-Health-Check': 'true' }, "Network Restore Health-Check");
+      // Vòng lặp ping sẽ tự động tiếp tục nếu scheduleNextPing được thiết kế đúng
     });
 
     window.addEventListener('offline', () => {
-      console.warn('Network connection lost');
-      updateServerStatus(false);
+      console.warn('Network connection lost.');
+      updateServerStatusUI(false, "Mất kết nối mạng");
+      if (pingTimeoutId) {
+        clearTimeout(pingTimeoutId); // Dừng ping khi offline
+      }
     });
   </script>
 </body>
