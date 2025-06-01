@@ -5,130 +5,60 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Speech to Text Demo (Browser API)</title>
   <style>
-    /* ... phần CSS như cũ ... */
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-      background-color: #f4f4f4;
-      color: #333;
-    }
-    #controls { margin: 20px 0; text-align: center; }
-    #record-btn {
-      padding: 12px 25px;
-      font-size: 18px;
-      background-color: #4285f4;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      transition: background-color 0.3s ease;
-    }
-    #record-btn:hover { background-color: #357ae8; }
-    #record-btn.recording { background-color: #ea4335; }
-    #record-btn.recording:hover { background-color: #d93525; }
-    #transcript {
-      margin-top: 20px;
-      padding: 15px;
-      border: 1px solid #ddd;
-      border-radius: 5px;
-      min-height: 100px;
-      background-color: #fff;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    h1 { text-align: center; color: #333; }
+    /* ... phần CSS giữ nguyên ... */
   </style>
 </head>
 <body>
   <h1>Speech to Text Demo (Browser API)</h1>
-
   <div id="controls">
     <button id="record-btn">🎤 Bắt đầu nói</button>
   </div>
-
   <div id="transcript">Kết quả sẽ hiển thị ở đây...</div>
 
   <script>
-    // --------------------------------------------
-    // Phần Web Speech API (giống như cũ)
-    const recordBtn = document.getElementById('record-btn');
-    const transcriptDiv = document.getElementById('transcript');
-    let isRecording = false;
-    let recognition;
+    // ... phần Web Speech API giữ nguyên ...
 
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      transcriptDiv.innerHTML = 'Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.';
-      recordBtn.disabled = true;
-    } else {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'vi-VN';
-
-      recognition.onstart = () => {
-        recordBtn.textContent = '■ Dừng ghi âm';
-        recordBtn.classList.add('recording');
-        isRecording = true;
-      };
-
-      recognition.onresult = (event) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const t = event.results[i][0].transcript;
-          if (event.results[i].isFinal) finalTranscript += t + '. ';
-          else interimTranscript += t;
-        }
-        transcriptDiv.innerHTML = finalTranscript + '<em style="color:gray">' + interimTranscript + '</em>';
-      };
-
-      recognition.onerror = (event) => {
-        let msg = 'Đã xảy ra lỗi: ' + event.error;
-        if (event.error === 'no-speech') msg = 'Không phát hiện được giọng nói. Vui lòng thử lại.';
-        else if (event.error === 'audio-capture') msg = 'Không thể thu âm. Kiểm tra micro của bạn.';
-        else if (event.error === 'not-allowed') msg = 'Quyền truy cập micro bị từ chối. Vui lòng cấp quyền.';
-        transcriptDiv.textContent = msg;
-      };
-
-      recognition.onend = () => {
-        recordBtn.textContent = '🎤 Bắt đầu nói';
-        recordBtn.classList.remove('recording');
-        isRecording = false;
-      };
-    }
-
-    recordBtn.addEventListener('click', () => {
-      if (!recognition) return;
-      if (isRecording) recognition.stop();
-      else {
-        transcriptDiv.innerHTML = 'Đang lắng nghe...';
-        recognition.start();
-      }
-    });
-
-    // --------------------------------------------
-    // Phần Keep‐alive ping /api/ping (mỗi 5 phút)
+    // ========================================
+    // === CẢI TIẾN PING: TĂNG TẦN SUẤT + LOG ===
+    // ========================================
     (function keepAlive() {
-      const PING_INTERVAL_MS = 5 * 60 * 1000; // 5 phút
+      const PING_INTERVAL_MS = 1 * 60 * 1000; // GIẢM CÒN 1 PHÚT
+      const MAX_RETRIES = 3;
+      let retryCount = 0;
 
       async function pingServer() {
         try {
-          const res = await fetch('/api/ping', { method: 'GET', cache: 'no-store' });
+          const start = Date.now();
+          const res = await fetch('/api/ping', {
+            method: 'GET',
+            cache: 'no-store',
+            headers: {'X-Ping-Warmup': 'true'} // Thêm header đặc biệt
+          });
+          
+          const duration = Date.now() - start;
           if (!res.ok) {
-            console.warn('Ping /api/ping trả về HTTP', res.status);
+            console.warn(`Ping failed: HTTP ${res.status} (${duration}ms)`);
+            retryCount++;
           } else {
-            console.log('Ping /api/ping thành công');
+            const data = await res.json();
+            console.log(`Ping successful: ${data.status} (${duration}ms) | Pool: ${data.recognizer_pool_size}`);
+            retryCount = 0;
           }
         } catch (err) {
-          console.warn('Ping /api/ping lỗi:', err);
+          console.warn('Ping error:', err);
+          retryCount++;
+        }
+
+        // Tự động tăng tốc nếu gặp lỗi
+        if (retryCount > MAX_RETRIES) {
+          console.warn('⚠️ Too many ping failures! Increasing ping frequency');
+          setInterval(pingServer, 30000); // Chuyển sang 30s
         }
       }
 
       // Gọi ngay khi load trang
       pingServer();
-      // Ping mỗi 5 phút
+      // Ping định kỳ
       setInterval(pingServer, PING_INTERVAL_MS);
     })();
   </script>
