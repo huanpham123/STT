@@ -1,129 +1,112 @@
 import os
 import uuid
-import time
-import logging
 from flask import Flask, request, jsonify, render_template
 import speech_recognition as sr
-from werkzeug.utils import secure_filename
-from flask_cors import CORS
+import time
+import logging
 
 # --- Cấu hình Flask App và Logging ---
-app = Flask(__name__, template_folder="templates")
-CORS(app)  # Cho phép CORS (nếu cần gọi từ trình duyệt khác gốc)
+app = Flask(__name__, template_folder="templates") # Đảm bảo thư mục templates đúng
 
-app.logger.setLevel(logging.INFO)
+# Cấu hình logging cơ bản của Flask
+# Log sẽ xuất hiện trong Vercel Runtime Logs
+app.logger.setLevel(logging.INFO) # Có thể đặt DEBUG để xem chi tiết hơn
 
 # --- Cấu hình chung ---
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # Giới hạn kích thước file upload 5MB
-TMP_DIR = "/tmp"
+# Giới hạn kích thước nội dung request tối đa là 5MB
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  
+# Thư mục tạm trên Vercel (chỉ có /tmp là có thể ghi)
+TMP_DIR = "/tmp" 
+# Đảm bảo thư mục tạm tồn tại
 os.makedirs(TMP_DIR, exist_ok=True)
-
-ALLOWED_EXTENSIONS = {"wav"}
-
-
-def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 # --- Routes ---
 @app.route("/", methods=["GET"])
 def index():
-    """
-    Trang chủ: trả về giao diện STT.html (dùng cho Web Speech API demo)
-    Nếu bạn chỉ dùng ESP32, không bắt buộc phải lên root, có thể bỏ qua.
-    """
+    """Trang chủ hiển thị giao diện Web Speech API (dùng API của trình duyệt)"""
     app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] GET request to / from {request.remote_addr}")
-    return render_template("STT.html")
-
+    return render_template("STT.html") # Tên file HTML của bạn
 
 @app.route("/api/transcribe", methods=["POST"])
 def transcribe():
-    """
-    API endpoint để ESP32 (hoặc client khác) gửi WAV và nhận kết quả chuyển thành text.
-    Trả về JSON: {"transcript": "<nội dung nhận dạng>"}
-    """
-    start_time = time.time()
-    request_id = str(uuid.uuid4())
-    client_ip = request.remote_addr or "Unknown"
+    """API endpoint cho nhận dạng giọng nói từ ESP32 hoặc client khác"""
+    request_received_time = time.time()
+    request_id = str(uuid.uuid4()) # Tạo ID duy nhất cho mỗi request để dễ theo dõi log
+    app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] POST /api/transcribe from {request.remote_addr}")
 
-    app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] POST /api/transcribe from {client_ip}")
-
-    # Kiểm tra file
     if "audio_data" not in request.files:
-        app.logger.warning(f"[ReqID: {request_id}] Missing 'audio_data' in request.files.")
-        return jsonify({"error": "Missing audio file (audio_data)"}), 400
+        app.logger.warning(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Missing 'audio_data' in request files.")
+        return jsonify({"error": "Missing audio file"}), 400
 
-    file = request.files["audio_data"]
-    filename = secure_filename(file.filename or "")
-    if not filename:
-        app.logger.warning(f"[ReqID: {request_id}] Empty filename.")
-        return jsonify({"error": "Invalid filename"}), 400
+    audio_file = request.files["audio_data"]
+    
+    if not audio_file.filename or not audio_file.filename.lower().endswith(".wav"):
+        app.logger.warning(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Invalid file type: {audio_file.filename}. Expecting .wav.")
+        # Bạn cũng có thể kiểm tra audio_file.content_type == 'audio/wav'
+        return jsonify({"error": "Invalid file type, expecting .wav"}), 400
 
-    if not allowed_file(filename):
-        app.logger.warning(f"[ReqID: {request_id}] Invalid file extension: {filename}")
-        return jsonify({"error": "Invalid file type. Only .wav allowed"}), 400
-
-    # Lưu tạm file vào TMP_DIR với uuid
-    temp_filename = f"{request_id}.wav"
+    # Tạo tên file tạm duy nhất trong thư mục /tmp
+    temp_filename = f"{request_id}.wav" # Sử dụng request_id để tên file dễ liên kết với log
     temp_path = os.path.join(TMP_DIR, temp_filename)
+    
     try:
-        file.save(temp_path)
+        save_start_time = time.time()
+        audio_file.save(temp_path)
         file_size = os.path.getsize(temp_path)
-        app.logger.info(f"[ReqID: {request_id}] Saved file to {temp_path} ({file_size} bytes)")
-    except Exception as e:
-        app.logger.error(f"[ReqID: {request_id}] Error saving file: {e}")
-        return jsonify({"error": f"File saving failed: {str(e)}"}), 500
+        app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Audio file saved to: {temp_path}. Size: {file_size} bytes. Save time: {time.time() - save_start_time:.2f}s")
 
-    # Thực hiện nhận dạng giọng nói
-    transcript_text = ""
-    try:
+        # Nhận dạng giọng nói
         recognizer = sr.Recognizer()
+        transcript_text = "" # Đổi tên biến để tránh trùng với tên hàm
+        
         with sr.AudioFile(temp_path) as source:
-            audio_data = recognizer.record(source)
-            app.logger.info(f"[ReqID: {request_id}] Loaded audio data, length={audio_data.duration_seconds:.2f}s")
-
+            record_start_time = time.time()
+            # Đọc toàn bộ file audio
+            audio_data = recognizer.record(source) 
+            app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Audio data loaded from file. Load time: {time.time() - record_start_time:.2f}s")
+            
             try:
+                recognize_start_time = time.time()
+                # Sử dụng Google Web Speech API để nhận dạng (mặc định của speech_recognition)
                 transcript_text = recognizer.recognize_google(audio_data, language="vi-VN")
-                app.logger.info(f"[ReqID: {request_id}] Transcript: {transcript_text}")
+                app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Transcript: '{transcript_text}'. Recognition time: {time.time() - recognize_start_time:.2f}s")
             except sr.UnknownValueError:
-                app.logger.warning(f"[ReqID: {request_id}] Google Speech Recognition could not understand audio.")
-                transcript_text = ""
-            except sr.RequestError as e_rec:
-                app.logger.error(f"[ReqID: {request_id}] Recognition service error: {e_rec}")
-                return jsonify({"error": f"Speech recognition service error: {str(e_rec)}"}), 500
-            except Exception as e_other:
-                app.logger.error(f"[ReqID: {request_id}] Unexpected error during recognition: {e_other}")
-                return jsonify({"error": f"Recognition processing failed: {str(e_other)}"}), 500
+                app.logger.warning(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Google Speech Recognition could not understand audio.")
+                transcript_text = "" # Hoặc thông báo lỗi cụ thể cho client
+            except sr.RequestError as e:
+                app.logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Google Speech Recognition service error; {e}")
+                return jsonify({"error": f"Speech recognition service error: {e}"}), 500
+            except Exception as e_rec: # Sửa lỗi typo e_Rec thành e_rec
+                app.logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Error during speech recognition processing: {str(e_rec)}")
+                return jsonify({"error": f"Recognition processing error: {str(e_rec)}"}), 500
 
+    except Exception as e_file_processing:
+        app.logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Error saving or processing audio file: {str(e_file_processing)}")
+        return jsonify({"error": f"File processing error: {str(e_file_processing)}"}), 500
     finally:
-        # Xóa file tạm
-        try:
-            if os.path.exists(temp_path):
+        # Luôn cố gắng xóa file tạm sau khi xử lý
+        if os.path.exists(temp_path):
+            try:
                 os.remove(temp_path)
-                app.logger.info(f"[ReqID: {request_id}] Temporary file {temp_path} deleted.")
-        except Exception as e_del:
-            app.logger.error(f"[ReqID: {request_id}] Error deleting temp file: {e_del}")
+                app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Temporary file {temp_path} removed.")
+            except Exception as e_del:
+                app.logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Error deleting temporary file {temp_path}: {str(e_del)}")
 
-    elapsed = time.time() - start_time
-    app.logger.info(f"[ReqID: {request_id}] Finished /api/transcribe in {elapsed:.2f}s")
-
+    total_processing_time = time.time() - request_received_time
+    app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [ReqID: {request_id}] Request to /api/transcribe finished. Total processing time: {total_processing_time:.2f}s")
     return jsonify({"transcript": transcript_text})
-
 
 @app.route("/api/ping", methods=["GET"])
 def ping():
-    """
-    Endpoint để ESP32 ping check và keep-alive (warm-up) serverless.
-    Trả về JSON {"status":"alive", "timestamp": <epoch>}
-    """
-    now_ts = time.time()
-    app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] GET /api/ping from {request.remote_addr}")
-    return jsonify({"status": "alive", "timestamp": now_ts}), 200
+    """Endpoint đơn giản để kiểm tra server hoặc "warm-up" function trên Vercel"""
+    app.logger.info(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] GET /api/ping (warm-up/status check)")
+    return jsonify({"status": "alive", "timestamp": time.time()}), 200
 
+# Vercel yêu cầu một biến tên là 'application' hoặc 'app' để chạy ứng dụng Flask.
+# Nếu tên file của bạn là app.py, Vercel sẽ tự tìm biến app.
+# Nếu tên file khác (ví dụ STT.py), bạn cần đảm bảo có dòng này:
+application = app
 
-# --- Main ---
-# Khi deploy lên Vercel, Flask sẽ không chạy __main__.
-# Khi chạy local (python STT.py), app.run() mới active.
-if __name__ == "__main__":
-    # debug=True chỉ nên dùng trong local dev, không nên bật khi deploy production
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+if __name__ == '__main__':
+    app.run(debug=True)
