@@ -2,14 +2,24 @@
   "version": 2,
   "builds": [
     {
-      "src": "STT.py", 
-      "use": "@vercel/python"
+      "src": "STT.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "15mb",
+        "runtime": "python3.9"
+      }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "STT.py" 
+      "dest": "STT.py"
     }
-  ]
+  ],
+  "functions": {
+    "app.py": {
+      "maxDuration": 45, 
+      "memory": 1024
+    }
+  }
 }
