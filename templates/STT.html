@@ -66,15 +66,16 @@
     let isRecording = false;
     let recognition;
 
+    // Kiểm tra hỗ trợ trình duyệt
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       transcriptDiv.innerHTML = 'Trình duyệt của bạn không hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.';
       recordBtn.disabled = true;
     } else {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'vi-VN';
+      recognition.continuous = true; // Tiếp tục nhận dạng cho đến khi dừng thủ công
+      recognition.interimResults = true; // Hiển thị kết quả tạm thời
+      recognition.lang = 'vi-VN'; // Đặt ngôn ngữ Tiếng Việt
 
       recognition.onstart = () => {
         console.log('Speech recognition started.');
@@ -86,14 +87,17 @@
       recognition.onresult = (event) => {
         let interimTranscript = '';
         let finalTranscript = '';
+
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += transcript + '. ';
+            finalTranscript += transcript + '. '; // Thêm dấu chấm câu cho rõ ràng
           } else {
             interimTranscript += transcript;
           }
         }
+        // Cập nhật nội dung hiển thị
+        // Hiển thị final trước, sau đó là interim (màu xám)
         transcriptDiv.innerHTML = finalTranscript + '<em style="color:gray">' + interimTranscript + '</em>';
       };
 
@@ -120,11 +124,12 @@
 
     recordBtn.addEventListener('click', () => {
       if (!recognition) return;
+
       if (isRecording) {
         recognition.stop();
       } else {
         try {
-          transcriptDiv.innerHTML = 'Đang lắng nghe...';
+          transcriptDiv.innerHTML = 'Đang lắng nghe...'; // Xóa kết quả cũ
           recognition.start();
         } catch (e) {
           console.error("Error starting recognition: ", e);
