@@ -13,3 +13,13 @@
     }
   ]
 }
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/ping",      
+      "schedule": "*/5 * * * *" 
+    }
+  ]
+}
+
