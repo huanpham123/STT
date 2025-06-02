@@ -1,22 +1,15 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "builds": [
     {
-      "src": "STT.py",
+      "src": "STT.py", 
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "STT.py"
-    }
-  ],
-  "crons": [
-    {
-      "path": "/api/ping",
-      "schedule": "*/5 * * * *"
+      "dest": "STT.py" 
     }
   ]
 }
